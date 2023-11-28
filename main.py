@@ -15,6 +15,19 @@ userid = False
 
 config = config.getconfig()
 
+banner = """
+    ____  ____  ______                 __    __
+   / __ \/ __ \/ ____/___ __________ _/ /_  / /_  ___  _____
+  / /_/ / / / / /_  / __ `/ ___/ __ `/ __ \/ __ \/ _ \/ ___/
+ / ____/ /_/ / __/ / /_/ / /  / /_/ / /_/ / /_/ /  __/ /
+/_/   /_____/_/    \__, /_/   \__,_/_.___/_.___/\___/_/
+                  /____/
+"""
+
+def center(var:str, space:int=None):
+	'''center elements (text) in the terminal'''
+	return '\n'.join(' ' * int(space or (os.get_terminal_size().columns - len(var.splitlines()[len(var.splitlines()) // 2])) / 2) + line for line in var.splitlines())
+
 def login():
 	global userid
 	username, password = "", ""
@@ -32,7 +45,7 @@ def login():
 	console.print("Logged in!", style="green")
 
 def selectservice(services):
-	table = Table(title="Avaliable services")
+	table = Table(title="Available services")
 	table.add_column("Code", style="cyan")
 	table.add_column("Name", style="green")
 
@@ -73,7 +86,12 @@ def downloadbook():
 		with console.status("[bold green]Checking token...") as status:
 			check = utils.checktoken(service, token)
 			if not check:
-				token = ""
+				status.update("[bold green]Refreshing token...")
+				refresh = utils.refreshtoken(service, token)
+				if not refresh:
+					token = ""
+				else:
+					token = refresh
 
 	if not token:
 		answer = Confirm.ask(f"Do you have a token for [b]{servicename}[/b]?", default=False)
@@ -88,12 +106,13 @@ def downloadbook():
 				console.print(f"Logged in, your token is [bold green]{token}[/bold green]")
 			else:
 				console.print(f"Error: Unable to authenticate to [b]{servicename}[/b]", style="red")
-				exit()
+				return
 
 		with console.status("[bold green]Checking token...") as status:
 			check = utils.checktoken(service, token)
 			if not check:
-				exit()
+				console.print(f"[b]{servicename}[/b] log in generated an invalid token! Report this issue!", style="red")
+				return
 			else:
 				utils.addtoken(userid, service, token)
 
@@ -104,7 +123,7 @@ def downloadbook():
 		console.print("No books!", style="bold red")
 		return
 
-	table = Table(title=f"Avaliable books for {servicename}")
+	table = Table(title=f"Available books for {servicename}")
 	table.add_column("Id", style="cyan")
 	table.add_column("Internal id", style="magenta")
 	table.add_column("Title", style="green")
@@ -191,14 +210,14 @@ def logout():
 	console.print("Logged out!", style="bold magenta")
 
 def books():
-	avaliable = utils.listbooks()
+	available = utils.listbooks()
 	table = Table(title="Books")
 	table.add_column("Service", style="cyan")
 	table.add_column("Title", style="green")
 	table.add_column("Pages", style="magenta")
 	table.add_column("Path", style="blue")
 
-	for i in avaliable:
+	for i in available:
 		table.add_row(i["service"], i["title"], str(i["pages"]), i["path"])
 
 	console.print(table)
@@ -207,7 +226,13 @@ def main():
 	if not (sys.version_info.major >= 3 and sys.version_info.minor >= 10):
 		console.print("Python version 3.10 or greater is required!", style="bold red")
 		exit()
-	console.print(Rule("pdfgrabber 1.0"))
+	showbanner = config.getboolean("pdfgrabber", "ShowBanner", fallback=True)
+	if showbanner:
+		console.print(center(banner), style="green bold", no_wrap=True, highlight=False)
+		console.print(Rule("version 1.0"))
+	else:
+		console.print(Rule("pdfgrabber version 1.0"))
+	
 	while True:
 		action = Prompt.ask("[magenta]What do you want to do?[/magenta] ((r)egister new user, (d)ownload from your libraries, download from a (o)ne-shot link, (l)ogout, manage (t)okens, (v)iew all books, (q)uit)", choices=["r", "d", "o", "l", "t", "v", "q"], default="d")
 		match action:

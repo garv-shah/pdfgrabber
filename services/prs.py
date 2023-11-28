@@ -24,7 +24,8 @@ import re
 service = "prs"
 
 # It probabily is such a happy time to maintain this pearson's legacy codebase
-clientid = "cGnFEyiajGgv2EhcShCPBa7jqwSFpSG5"
+reader_etext_clientid = "cGnFEyiajGgv2EhcShCPBa7jqwSFpSG5"
+pearson_plus_clientid = "t1txmB9oRay3yK5aIQxsS28Z9T19xMLM"
 hawkkeyid = "GPgRTj6fOI"
 hawkkey = "UTpkeCcbmFwsz0DAGZRhnkGuQGoYVz6a"
 appid = "54c89f6c1d650fdeccbef5cd"
@@ -32,12 +33,16 @@ tenantid = "0a0e20af-1ef3-4650-8f44-48c3bc5f9584"
 tenantkey = "9edbf937-3955-4c98-a698-07718a6380df"
 rpluszipkey = "sDkjhfkj8yhn8gig"
 
-def getetexttoken(username, password):
+def getetexttoken(username, password, clientid):
 	r = requests.post("https://login.pearson.com/v1/piapi/login/webcredentials", data={"password": password, "isMobile": "true", "grant_type": "password", "client_id": clientid, "username": username}, headers={"User-Agent": "mobile_app"})
 	return r.json()
 
-def refreshetexttoken(refreshtoken):
-	r = requests.post("https://login.pearson.com/v1/piapi/login/webcredentials", data={"refresh": "true", "client_id": clientid, "isMobile": "true"}, cookies={"PiAuthSession": refreshtoken})
+def resolveescrow(escrowticket, clientid):
+	r = requests.post("https://login.pearson.com/v1/piapi/login/webacceptconsent", data={"escrowTicket": escrowticket, "client_id": clientid})
+	return r.json()
+
+def refreshetexttoken(refreshtoken, clientid):
+	r = requests.post("https://login.pearson.com/v1/piapi/login/webtoken", data={"refresh": "true", "client_id": clientid, "isMobile": "true"}, cookies={"PiAuthSession": refreshtoken})
 	return r.json()
 
 def getetextuserinfo(userid, token):
@@ -112,7 +117,7 @@ def decryptfile(file, key):
 
 	# It's not AES128 key=b64decoded string, it's AES192 key=24-byte string
 	obj = AES.new(key, AES.MODE_CBC, iv)
-	return obj.decrypt(file[16:])
+	return unpad(obj.decrypt(file[16:]), AES.block_size)
 
 def getoutlines(item, labels, level):
 	subtoc = []
@@ -151,40 +156,49 @@ def cover(token, bookid, data):
 		r = requests.get(data["cover"])
 		return r.content
 
-def refreshtoken(token):
+def refreshtoken(token, clientid=reader_etext_clientid):
 	etexttoken, etextuserid, rplustoken, rplususerid, refreshtoken = tuple(token.split("|"))
-	refresh = refreshetexttoken(refreshtoken)
-	if "error" not in refresh:
+	refresh = refreshetexttoken(refreshtoken, clientid)
+	if refresh["status"] == "success":
 		etexttoken, refreshtoken = refresh["data"]["access_token"], refresh["data"]["refresh_token"]
-	etextuserinfo = getetextuserinfo(etextuserid, etexttoken)
-	rplususerinfo = getrplususerinfo(rplustoken)
-	if "error" not in etextuserinfo and "error" not in rplususerinfo:
-		return "|".join([etexttoken, etextuserid, rplustoken, rplususerid, refreshtoken])
+		etextuserinfo = getetextuserinfo(etextuserid, etexttoken)
+		if "error" not in etextuserinfo:
+			return "|".join([etexttoken, etextuserid, rplustoken, rplususerid, refreshtoken])
 
 def checktoken(token):
 	etexttoken, etextuserid, rplustoken, rplususerid, refreshtoken = tuple(token.split("|"))
 	etextuserinfo = getetextuserinfo(etextuserid, etexttoken)
-	rplususerinfo = getrplususerinfo(rplustoken)
-	if "error" not in etextuserinfo and "error" not in rplususerinfo:
+	if "error" not in etextuserinfo:
 		return "|".join([etexttoken, etextuserid, rplustoken, rplususerid, refreshtoken])
 
-def login(username, password):
-	logindata = getetexttoken(username, password)
+def login(username, password, clientid=reader_etext_clientid):
+	logindata = getetexttoken(username, password, clientid)
 	if "data" not in logindata:
-		return
+		if len(logindata["message"]) == 10:
+			logindata = resolveescrow([logindata["message"]], clientid)
+		else:
+			return
 	etexttoken, etextuserid = logindata["data"]["access_token"], logindata["data"]["userId"]
 	etextuserinfo = getetextuserinfo(etextuserid, etexttoken)
 	if "id" not in etextuserinfo:
 		return
-	rplustoken = getrplustoken(username, etextuserinfo["firstName"], etextuserinfo["lastName"])
-	rplususerinfo = getrplususerinfo(rplustoken["token"])
 
-	return "|".join([etexttoken, etextuserid, rplustoken["token"], rplususerinfo["id"], logindata["data"]["refresh_token"]])
+	rplustoken, rplususerid = "", ""
+	rplustokenreply = getrplustoken(username, etextuserinfo["firstName"], etextuserinfo["lastName"])
+	if "token" in rplustokenreply:
+		rplustoken = rplustokenreply["token"]
+		rplususerinfo = getrplususerinfo(rplustoken)
+		rplususerid = rplususerinfo["id"]
+
+	return "|".join([etexttoken, etextuserid, rplustoken, rplususerid, logindata["data"]["refresh_token"]])
 
 def library(token):
 	etexttoken, etextuserid, rplustoken, rplususerid, refreshtoken = tuple(token.split("|"))
 	books = {}
-	for i in getbookshelf(etexttoken, rplustoken, rplususerid):
+	bookshelf = getbookshelf(etexttoken, rplustoken, rplususerid)
+	if "error" in bookshelf:
+		return
+	for i in bookshelf:
 		books[str(i["book_id"])] = {"title": i["book_title"], "cover": i["cover_image_url"], "isbn": i["isbn"], "type": i["product_model"], "prodid": i["product_id"], "author": i["author"], "pwd": i["encrypted_password"], "url": i["downloadUrl"]}
 	
 	return books
@@ -270,16 +284,16 @@ def downloadrplusepub(url, password, progress):
 
 		progress(31, "Extracting epub")
 		epubzip.extractall(tmpdir)
-		info = et.fromstring(open(tmpdir / "META-INF" / "container.xml").read())
+		info = et.fromstring(open(tmpdir / "META-INF" / "container.xml", "r", encoding="utf-8-sig").read())
 		contentspath = tmpdir / info.find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfiles").find("{urn:oasis:names:tc:opendocument:xmlns:container}rootfile").get("full-path")
-		contents = et.fromstring(open(contentspath).read())
+		contents = et.fromstring(open(contentspath, "r", encoding="utf-8-sig").read())
 
 		files = {i.get("id"): i.attrib for i in contents.find("opf:manifest", ns).findall("opf:item", ns)}
 		spine = contents.find("opf:spine", ns)
 		pages = [(contentspath.parent / files[i.get("idref")]["href"]).resolve() for i in spine.findall("opf:itemref", ns)]
 		navpath = contentspath.parent / next(i["href"] for i in files.values() if i.get("properties") == "nav")
 		
-		tocfile = et.fromstring(open(navpath, "r").read())
+		tocfile = et.fromstring(open(navpath, "r", encoding="utf-8-sig").read())
 
 		tocitem = next(i for i in tocfile.find("xhtml:body", ns).findall("xhtml:nav", ns) if i.get("{http://www.idpf.org/2007/ops}type") == "toc")
 		toc.extend(gentoc(tocitem.find("xhtml:ol", ns), 1, pages, navpath.parent))
@@ -299,12 +313,13 @@ def downloadrplusepub(url, password, progress):
 				else:
 					labels.append(str(j + 1))
 
-				sizematch = re.search('content.+?width\s{,1}=\s{,1}([0-9]+).+?height\s{,1}=\s{,1}([0-9]+)', open(fullpath).read())
+				sizematch = re.search('content.+?width\s?=\s?([0-9]+).+?height\s?=\s?([0-9]+)', open(fullpath, encoding="utf-8-sig").read())
 
 				page.goto(fullpath.as_uri())
 				advancement = (j + 1) / len(pages) * 62 + 36
 				progress(advancement, f"Printing {j + 1}/{len(pages)}")
-				pdfpagebytes = page.pdf(print_background=True, width=sizematch.group(1) + "px", height=sizematch.group(2) + "px", page_ranges="1")
+				width, height = str(int(sizematch.group(1)) / 144) + "in", str(int(sizematch.group(2)) / 144) + "in"
+				pdfpagebytes = page.pdf(print_background=True, width=width, height=height, page_ranges="1")
 				pagepdf = fitz.Document(stream=pdfpagebytes, filetype="pdf")
 				pdf.insert_pdf(pagepdf)
 			browser.close()

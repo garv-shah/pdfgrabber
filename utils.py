@@ -15,8 +15,8 @@ usertable = db.table("users")
 tokentable = db.table("tokens")
 booktable = db.table("books")
 
-services = {"bsm": "bSmart", "ees": "easyeschool", "hbs": "Mondadori HUB Scuola", "mcm": "MEE2", "myl": "MyLim", "prs": "Pearson eText / Reader+", "sbk": "Scuolabook", "znc": "Zanichelli Booktab / Kitaboo", "dbk": "Laterza diBooK", "olb": "Oxford Learner’s Bookshelf", "rfl": "Raffaello Player"}
-oneshots = {"ktb": "Kitaboo", "gnt": "mydBook Giunti TVP"}
+services = {"bsm": "bSmart", "ees": "easyeschool", "hbs": "Mondadori HUB Scuola", "mcm": "MEE2", "myl": "MyLim", "prs": "Pearson eText / Reader+", "psp": "Pearson+", "sbk": "Scuolabook", "znc": "Zanichelli Booktab / Kitaboo", "dbk": "Laterza diBooK", "olb": "Oxford Learner’s Bookshelf", "rfl": "Raffaello Player", "cmb": "Cambridge GO", "blk": "Blinklearning", "hoe": "HoepliAcademy+"}
+oneshots = {"gnt": "mydBook Giunti TVP"}
 
 def getservice(name, oneshot=False):
 	if oneshot:
@@ -72,10 +72,13 @@ def downloadoneshot(servicename, url, progress):
 	metadata = {'producer': "PyMuPDF " + fitz.version[0], 'format': 'PDF 1.7', 'encryption': None, 'author': author, 'modDate': pdfnow, 'keywords': 'none', 'title': title, 'creationDate': pdfnow, 'creator': "pdfgrabber1.0", 'subject': 'none'}
 	pdf.set_metadata(metadata)
 	progress(99, "Saving pdf")
-	if config.getboolean(servicename, "Compress", fallback=False):
-		pdf.save(pdfpath, garbage=config.getint(servicename, "Garbage", fallback=3), clean=config.getboolean(servicename, "Clean", fallback=True), linear=config.getboolean(servicename, "Linearize", fallback=True))
+	if config.getboolean(servicename, "EzSave", fallback=True):
+		pdf.ez_save(pdfpath)
 	else:
-		pdf.save(pdfpath)
+		if config.getboolean(servicename, "Compress", fallback=False):
+			pdf.save(pdfpath, garbage=config.getint(servicename, "Garbage", fallback=3), clean=config.getboolean(servicename, "Clean", fallback=True), linear=config.getboolean(servicename, "Linearize", fallback=True))
+		else:
+			pdf.save(pdfpath)
 
 	booktable.upsert({"service": servicename, "bookid": bookid, "title": title, "pages": len(pdf), "path": str(pdfpath)}, (Query().service == servicename) and (Query().bookid == bookid))
 	return pdfpath
@@ -97,6 +100,11 @@ def library(servicename, token):
 def checktoken(servicename, token):
 	service = getservice(servicename)
 	return service.checktoken(token)
+
+def refreshtoken(servicename, token):
+	service = getservice(servicename)
+	if hasattr(service, "refreshtoken"):
+		return service.refreshtoken(token)
 
 def new_login(username, password, checkpassword=True):
 	passwordhash = sha256(password.encode()).hexdigest()
